@@ -2576,19 +2576,27 @@ router.post('/api/webhook/document', async (req, res) => {
  *               $ref: '#/components/schemas/Error'
  */
 router.get('/dashboard', async (req, res) => {
-  const tagCount = await paperlessService.getTagCount();
-  const correspondentCount = await paperlessService.getCorrespondentCount();
-  const documentCount = await paperlessService.getDocumentCount();
-  const processedDocumentCount = await documentModel.getProcessedDocumentsCount();
-  const metrics = await documentModel.getMetrics();
-  const processingTimeStats = await documentModel.getProcessingTimeStats();
-  const tokenDistribution = await documentModel.getTokenDistribution();
-  const documentTypes = await documentModel.getDocumentTypeStats();
+  const [
+    tagCount,
+    correspondentCount,
+    documentCount,
+    processedDocumentCount,
+    metricsSummary,
+    processingTimeStats,
+    tokenDistribution,
+    documentTypes
+  ] = await Promise.all([
+    paperlessService.getTagCount(),
+    paperlessService.getCorrespondentCount(),
+    paperlessService.getDocumentCount(),
+    documentModel.getProcessedDocumentsCount(),
+    documentModel.getMetricsSummary(),
+    documentModel.getProcessingTimeStats(),
+    documentModel.getTokenDistribution(),
+    documentModel.getDocumentTypeStats()
+  ]);
   
-  const averagePromptTokens = metrics.length > 0 ? Math.round(metrics.reduce((acc, cur) => acc + cur.promptTokens, 0) / metrics.length) : 0;
-  const averageCompletionTokens = metrics.length > 0 ? Math.round(metrics.reduce((acc, cur) => acc + cur.completionTokens, 0) / metrics.length) : 0;
-  const averageTotalTokens = metrics.length > 0 ? Math.round(metrics.reduce((acc, cur) => acc + cur.totalTokens, 0) / metrics.length) : 0;
-  const tokensOverall = metrics.length > 0 ? metrics.reduce((acc, cur) => acc + cur.totalTokens, 0) : 0;
+  const { averagePromptTokens, averageCompletionTokens, averageTotalTokens, tokensOverall } = metricsSummary;
   
   const version = configFile.PAPERLESS_AI_VERSION || ' ';
   
