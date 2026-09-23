@@ -14,6 +14,7 @@ class ChatService {
   constructor() {
     this.chats = new Map(); // Stores chat histories: documentId -> messages[]
     this.tempDir = path.join(os.tmpdir(), 'paperless-chat');
+    this.openaiClients = new Map(); // Cached OpenAI clients keyed by provider configuration
     
     // Create temporary directory if it doesn't exist
     if (!fs.existsSync(this.tempDir)) {
@@ -99,6 +100,22 @@ class ChatService {
     }
   }
 
+  /**
+   * Returns a cached OpenAI client for the given provider and options,
+   * creating it on first use. Clients are keyed by provider + options so a
+   * configuration change yields a new client while unchanged configs reuse
+   * the existing one (and its HTTP keep-alive connections).
+   */
+  getOpenAIClient(provider, options) {
+    const key = `${provider}:${JSON.stringify(options)}`;
+    let client = this.openaiClients.get(key);
+    if (!client) {
+      client = new OpenAI(options);
+      this.openaiClients.set(key, client);
+    }
+    return client;
+  }
+
   async sendMessageStream(documentId, userMessage, res) {
     try {
       if (!this.chats.has(documentId)) {
@@ -123,8 +140,7 @@ class ChatService {
         // Make sure OpenAIService is initialized
         OpenAIService.initialize();
         
-        // Always create a new client instance for this request to ensure it works
-        const openai = new OpenAI({
+        const openai = this.getOpenAIClient('openai', {
           apiKey: process.env.OPENAI_API_KEY
         });
         
@@ -143,7 +159,7 @@ class ChatService {
         }
       } else if (aiProvider === 'custom') {
         // Use OpenAI SDK with custom base URL
-        const customOpenAI = new OpenAI({
+        const customOpenAI = this.getOpenAIClient('custom', {
           baseURL: process.env.CUSTOM_BASE_URL,
           apiKey: process.env.CUSTOM_API_KEY,
         });
@@ -163,7 +179,7 @@ class ChatService {
         }
       } else if (aiProvider === 'azure') {
         // Use OpenAI SDK with Azure configuration
-        const azureOpenAI = new OpenAI({
+        const azureOpenAI = this.getOpenAIClient('azure', {
           apiKey: process.env.AZURE_API_KEY,
           baseURL: `${process.env.AZURE_ENDPOINT}/openai/deployments/${process.env.AZURE_DEPLOYMENT_NAME}`,
           defaultQuery: { 'api-version': process.env.AZURE_API_VERSION },
@@ -184,7 +200,7 @@ class ChatService {
         }
       } else if (aiProvider === 'ollama') {
         // Use OpenAI SDK for Ollama with OpenAI API compatibility
-        const ollamaOpenAI = new OpenAI({
+        const ollamaOpenAI = this.getOpenAIClient('ollama', {
           baseURL: `${process.env.OLLAMA_API_URL}/v1`,
           apiKey: 'ollama', // Ollama doesn't require a real API key but the SDK requires some value
         });
