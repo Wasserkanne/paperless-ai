@@ -9,6 +9,7 @@ const documentModel = require('../models/document.js');
 const AIServiceFactory = require('../services/aiServiceFactory');
 const debugService = require('../services/debugService.js');
 const configFile = require('../config/config.js');
+const { runWithConcurrency } = require('../services/serviceUtils.js');
 const ChatService = require('../services/chatService.js');
 const documentsService = require('../services/documentsService.js');
 const RAGService = require('../services/ragService.js');
@@ -1522,10 +1523,10 @@ try {
         // Extract tag names from tag objects
         const existingTagNames = existingTags.map(tag => tag.name);
     
-        for (const doc of documents) {
+        await runWithConcurrency(documents, configFile.scanConcurrency, async (doc) => {
           try {
             const result = await processDocument(doc, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
-            if (!result) continue;
+            if (!result) return;
     
             const { analysis, originalData } = result;
             const updateData = await buildUpdateData(analysis, doc, originalData);
@@ -1533,7 +1534,7 @@ try {
           } catch (error) {
             console.error(`[ERROR] processing document ${doc.id}:`, error);
           }
-        }
+        });
       } catch (error) {
         console.error('[ERROR]  during document scan:', error);
       } finally {
@@ -2580,19 +2581,27 @@ router.post('/api/webhook/document', async (req, res) => {
  *               $ref: '#/components/schemas/Error'
  */
 router.get('/dashboard', async (req, res) => {
-  const tagCount = await paperlessService.getTagCount();
-  const correspondentCount = await paperlessService.getCorrespondentCount();
-  const documentCount = await paperlessService.getDocumentCount();
-  const processedDocumentCount = await documentModel.getProcessedDocumentsCount();
-  const metrics = await documentModel.getMetrics();
-  const processingTimeStats = await documentModel.getProcessingTimeStats();
-  const tokenDistribution = await documentModel.getTokenDistribution();
-  const documentTypes = await documentModel.getDocumentTypeStats();
+  const [
+    tagCount,
+    correspondentCount,
+    documentCount,
+    processedDocumentCount,
+    metricsSummary,
+    processingTimeStats,
+    tokenDistribution,
+    documentTypes
+  ] = await Promise.all([
+    paperlessService.getTagCount(),
+    paperlessService.getCorrespondentCount(),
+    paperlessService.getDocumentCount(),
+    documentModel.getProcessedDocumentsCount(),
+    documentModel.getMetricsSummary(),
+    documentModel.getProcessingTimeStats(),
+    documentModel.getTokenDistribution(),
+    documentModel.getDocumentTypeStats()
+  ]);
   
-  const averagePromptTokens = metrics.length > 0 ? Math.round(metrics.reduce((acc, cur) => acc + cur.promptTokens, 0) / metrics.length) : 0;
-  const averageCompletionTokens = metrics.length > 0 ? Math.round(metrics.reduce((acc, cur) => acc + cur.completionTokens, 0) / metrics.length) : 0;
-  const averageTotalTokens = metrics.length > 0 ? Math.round(metrics.reduce((acc, cur) => acc + cur.totalTokens, 0) / metrics.length) : 0;
-  const tokensOverall = metrics.length > 0 ? metrics.reduce((acc, cur) => acc + cur.totalTokens, 0) : 0;
+  const { averagePromptTokens, averageCompletionTokens, averageTotalTokens, tokensOverall } = metricsSummary;
   
   const version = configFile.PAPERLESS_AI_VERSION || ' ';
   

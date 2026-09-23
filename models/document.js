@@ -191,6 +191,29 @@ module.exports = {
     }
   },
 
+  async getMetricsSummary() {
+    try {
+      const row = db.prepare(`
+        SELECT
+          COUNT(*) AS count,
+          COALESCE(SUM(promptTokens), 0) AS sumPromptTokens,
+          COALESCE(SUM(completionTokens), 0) AS sumCompletionTokens,
+          COALESCE(SUM(totalTokens), 0) AS sumTotalTokens
+        FROM openai_metrics
+      `).get();
+      return {
+        count: row.count,
+        averagePromptTokens: row.count > 0 ? Math.round(row.sumPromptTokens / row.count) : 0,
+        averageCompletionTokens: row.count > 0 ? Math.round(row.sumCompletionTokens / row.count) : 0,
+        averageTotalTokens: row.count > 0 ? Math.round(row.sumTotalTokens / row.count) : 0,
+        tokensOverall: row.sumTotalTokens
+      };
+    } catch (error) {
+      console.error('[ERROR] getting metrics summary:', error);
+      return { count: 0, averagePromptTokens: 0, averageCompletionTokens: 0, averageTotalTokens: 0, tokensOverall: 0 };
+    }
+  },
+
   async getProcessedDocuments() {
     try {
       return db.prepare('SELECT * FROM processed_documents').all();

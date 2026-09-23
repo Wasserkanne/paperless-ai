@@ -4,6 +4,12 @@ const envPath = path.join(currentDir, 'data', '.env');
 console.log('Loading .env from:', envPath); // Debug log
 require('dotenv').config({ path: envPath });
 
+// Helper function to parse positive integer env vars
+const parsePositiveInt = (value, defaultValue) => {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : defaultValue;
+};
+
 // Helper function to parse boolean-like env vars
 const parseEnvBoolean = (value, defaultValue = 'yes') => {
   if (!value) return defaultValue;
@@ -48,7 +54,8 @@ console.log('Loaded environment variables:', {
   PAPERLESS_API_TOKEN: '******',
   LIMIT_FUNCTIONS: limitFunctions,
   AI_RESTRICTIONS: aiRestrictions,
-  EXTERNAL_API: externalApiConfig.enabled === 'yes' ? 'enabled' : 'disabled'
+  EXTERNAL_API: externalApiConfig.enabled === 'yes' ? 'enabled' : 'disabled',
+  SCAN_CONCURRENCY: parsePositiveInt(process.env.SCAN_CONCURRENCY, 3)
 });
 
 module.exports = {
@@ -91,6 +98,7 @@ module.exports = {
   customFields: process.env.CUSTOM_FIELDS || '',
   aiProvider: process.env.AI_PROVIDER || 'openai',
   scanInterval: process.env.SCAN_INTERVAL || '*/30 * * * *',
+  scanConcurrency: parsePositiveInt(process.env.SCAN_CONCURRENCY, 3),
   useExistingData: process.env.USE_EXISTING_DATA || 'no',
   // Add limit functions to config
   limitFunctions: {
