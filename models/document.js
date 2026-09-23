@@ -113,12 +113,6 @@ const getHistoryDocumentsCount = db.prepare(`
   SELECT COUNT(*) as count FROM history_documents
 `);
 
-const getPaginatedHistoryDocuments = db.prepare(`
-  SELECT * FROM history_documents 
-  ORDER BY created_at DESC
-  LIMIT ? OFFSET ?
-`);
-
 const createProcessingStatus = db.prepare(`
   CREATE TABLE IF NOT EXISTS processing_status (
     id INTEGER PRIMARY KEY,
@@ -347,11 +341,97 @@ module.exports = {
     }
   },
   
-  async getPaginatedHistory(limit, offset) {
+  /**
+   * Server-side paginated history for DataTables.
+   * @param {number} limit
+   * @param {number} offset
+   * @param {object} [options]
+   * @param {string} [options.search]          case-insensitive substring on title / correspondent / tag names
+   * @param {number|null} [options.tagId]      only rows whose tags JSON array contains this id
+   * @param {string} [options.correspondent]   exact match (null correspondent is treated as 'Not assigned')
+   * @param {string} [options.orderBy]         one of document_id | title | created_at | tags | correspondent
+   * @param {'asc'|'desc'} [options.orderDir]
+   * @param {Array<{id:number,name:string}>} [options.tags]  known tags, used for tag-name search and tag sorting
+   * @returns {{ rows: object[], recordsTotal: number, recordsFiltered: number }}
+   */
+  async getPaginatedHistory(limit, offset, options = {}) {
     try {
-      return getPaginatedHistoryDocuments.all(limit, offset);
+      const TITLE_EXPR = "COALESCE(h.title, 'Modified: Invalid Date')";
+      const CORRESPONDENT_EXPR = "COALESCE(h.correspondent, 'Not assigned')";
+      const TAGS_JSON = "CASE WHEN json_valid(h.tags) THEN h.tags ELSE '[]' END";
+      const TAG_NAMES_KEY = `(SELECT group_concat(tn.name, char(1)) FROM (SELECT tn.name FROM json_each(${TAGS_JSON}) je JOIN tag_names tn ON tn.id = CAST(je.value AS INTEGER) ORDER BY tn.name) tn)`;
+
+      const params = [];
+      const tags = Array.isArray(options.tags) ? options.tags : [];
+      let cte;
+      if (tags.length > 0) {
+        cte = `WITH tag_names(id, name) AS (VALUES ${tags.map(() => '(?, ?)').join(', ')})`;
+        for (const tag of tags) {
+          params.push(tag.id, tag.name);
+        }
+      } else {
+        cte = 'WITH tag_names(id, name) AS (SELECT NULL, NULL WHERE 0)';
+      }
+
+      const whereClauses = [];
+      const whereParams = [];
+
+      const search = options.search || '';
+      if (search) {
+        const escaped = search.replace(/[\\%_]/g, c => '\\' + c);
+        const pattern = `%${escaped}%`;
+        whereClauses.push(`(${TITLE_EXPR} LIKE ? ESCAPE '\\' OR ${CORRESPONDENT_EXPR} LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM json_each(${TAGS_JSON}) je JOIN tag_names tn ON tn.id = CAST(je.value AS INTEGER) WHERE tn.name LIKE ? ESCAPE '\\'))`);
+        whereParams.push(pattern, pattern, pattern);
+      }
+
+      if (Number.isInteger(options.tagId)) {
+        whereClauses.push(`EXISTS (SELECT 1 FROM json_each(${TAGS_JSON}) je WHERE CAST(je.value AS INTEGER) = ?)`);
+        whereParams.push(options.tagId);
+      }
+
+      if (options.correspondent) {
+        whereClauses.push(`${CORRESPONDENT_EXPR} = ?`);
+        whereParams.push(options.correspondent);
+      }
+
+      const where = whereClauses.length > 0 ? `WHERE ${whereClauses.join(' AND ')}` : '';
+
+      const orderByMap = {
+        document_id: 'h.document_id',
+        title: `${TITLE_EXPR} COLLATE NOCASE`,
+        created_at: 'h.created_at',
+        correspondent: `${CORRESPONDENT_EXPR} COLLATE NOCASE`,
+        tags: TAG_NAMES_KEY
+      };
+      const dir = options.orderDir === 'asc' ? 'ASC' : 'DESC';
+      const orderBy = orderByMap[options.orderBy]
+        ? `ORDER BY ${orderByMap[options.orderBy]} ${dir}, h.id ASC`
+        : 'ORDER BY h.id ASC';
+
+      const selectSql = `${cte} SELECT h.* FROM history_documents h ${where} ${orderBy} LIMIT ? OFFSET ?`;
+      const rows = db.prepare(selectSql).all(...params, ...whereParams, limit, offset);
+
+      const countSql = `${cte} SELECT COUNT(*) FROM history_documents h ${where}`;
+      const recordsFiltered = db.prepare(countSql).pluck().get(...params, ...whereParams);
+
+      const recordsTotal = await this.getHistoryDocumentsCount();
+
+      return { rows, recordsTotal, recordsFiltered };
     } catch (error) {
       console.error('[ERROR] getting paginated history:', error);
+      return { rows: [], recordsTotal: 0, recordsFiltered: 0 };
+    }
+  },
+
+  async getHistoryCorrespondents() {
+    try {
+      return db.prepare(`
+        SELECT DISTINCT correspondent FROM history_documents
+        WHERE correspondent IS NOT NULL AND correspondent != ''
+        ORDER BY correspondent
+      `).pluck().all();
+    } catch (error) {
+      console.error('[ERROR] getting history correspondents:', error);
       return [];
     }
   },

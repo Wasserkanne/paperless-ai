@@ -430,6 +430,18 @@ class PaperlessService {
       .sort((a, b) => a.name.localeCompare(b.name));
   }
 
+  // Tags from the in-memory cache (refreshed by ensureTagCache), no remote call per request
+  async getCachedTags() {
+    this.initialize();
+    if (!this.client) return [];
+    try {
+      await this.ensureTagCache();
+    } catch (error) {
+      console.error('[ERROR] loading tags from cache:', error.message);
+    }
+    return Array.from(this.tagCache.values());
+  }
+
   async getTagCount() {
     this.initialize();
     try {
