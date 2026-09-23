@@ -102,27 +102,7 @@ class OllamaService {
             if (!customPrompt) {
                 prompt = this._buildPrompt(content, existingTags, existingCorrespondentList, existingDocumentTypesList, options);
             } else {
-                // Parse CUSTOM_FIELDS for custom prompt
-                let customFieldsObj;
-                try {
-                    customFieldsObj = JSON.parse(process.env.CUSTOM_FIELDS);
-                } catch (error) {
-                    console.error('Failed to parse CUSTOM_FIELDS:', error);
-                    customFieldsObj = { custom_fields: [] };
-                }
-
-                const customFieldsTemplate = {};
-                customFieldsObj.custom_fields.forEach((field, index) => {
-                    customFieldsTemplate[index] = {
-                        field_name: field.value,
-                        value: "Fill in the value based on your analysis"
-                    };
-                });
-
-                const customFieldsStr = '"custom_fields": ' + JSON.stringify(customFieldsTemplate, null, 2)
-                    .split('\n')
-                    .map(line => '    ' + line)
-                    .join('\n');
+                const customFieldsStr = this._generateCustomFieldsTemplate();
 
                 prompt = customPrompt + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr) + "\n\n" + JSON.stringify(content);
                 console.log('[DEBUG] Ollama Service started with custom prompt');
@@ -260,30 +240,7 @@ class OllamaService {
             ? existingCorrespondent
             : [];
 
-        // Parse CUSTOM_FIELDS from environment variable
-        let customFieldsObj;
-        try {
-            customFieldsObj = JSON.parse(process.env.CUSTOM_FIELDS);
-        } catch (error) {
-            console.error('Failed to parse CUSTOM_FIELDS:', error);
-            customFieldsObj = { custom_fields: [] };
-        }
-
-        // Generate custom fields template for the prompt
-        const customFieldsTemplate = {};
-
-        customFieldsObj.custom_fields.forEach((field, index) => {
-            customFieldsTemplate[index] = {
-                field_name: field.value,
-                value: "Fill in the value based on your analysis"
-            };
-        });
-
-        // Convert template to string for replacement and wrap in custom_fields
-        const customFieldsStr = '"custom_fields": ' + JSON.stringify(customFieldsTemplate, null, 2)
-            .split('\n')
-            .map(line => '    ' + line)  // Add proper indentation
-            .join('\n');
+        const customFieldsStr = this._generateCustomFieldsTemplate();
 
         // Get system prompt based on configuration
         if (config.useExistingData === 'yes' && config.restrictToExistingTags === 'no' && config.restrictToExistingCorrespondents === 'no') {
@@ -394,6 +351,10 @@ class OllamaService {
      * @returns {string} Custom fields template as a string
      */
     _generateCustomFieldsTemplate() {
+        if (this._customFieldsTemplate !== undefined) {
+            return this._customFieldsTemplate;
+        }
+
         let customFieldsObj;
         try {
             customFieldsObj = JSON.parse(process.env.CUSTOM_FIELDS);
@@ -413,10 +374,12 @@ class OllamaService {
         });
 
         // Convert template to string for replacement and wrap in custom_fields
-        return '"custom_fields": ' + JSON.stringify(customFieldsTemplate, null, 2)
+        this._customFieldsTemplate = '"custom_fields": ' + JSON.stringify(customFieldsTemplate, null, 2)
             .split('\n')
             .map(line => '    ' + line)  // Add proper indentation
             .join('\n');
+
+        return this._customFieldsTemplate;
     }
 
     /**
