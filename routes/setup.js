@@ -1035,13 +1035,8 @@ router.get('/chat/init/:documentId', async (req, res) => {
  */
 router.get('/history', async (req, res) => {
   try {
-    const allTags = await paperlessService.getTags();
-    const tagMap = new Map(allTags.map(tag => [tag.id, tag]));
-
-    // Get all correspondents for filter dropdown
-    const historyDocuments = await documentModel.getAllHistory();
-    const allCorrespondents = [...new Set(historyDocuments.map(doc => doc.correspondent))]
-      .filter(Boolean).sort();
+    const allTags = await paperlessService.getCachedTags();
+    const allCorrespondents = await documentModel.getHistoryCorrespondents();
 
     res.render('history', {
       version: configFile.PAPERLESS_AI_VERSION,
@@ -1214,22 +1209,34 @@ router.get('/api/history', async (req, res) => {
     const start = parseInt(req.query.start) || 0;
     const length = parseInt(req.query.length) || 10;
     const search = req.query.search?.value || '';
-    const tagFilter = req.query.tag || '';
+    const tagFilter = parseInt(req.query.tag);
     const correspondentFilter = req.query.correspondent || '';
 
-    // Get all documents
-    const allDocs = await documentModel.getAllHistory();
-    const allTags = await paperlessService.getTags();
-    const tagMap = new Map(allTags.map(tag => [tag.id, tag]));
+    let orderBy = null;
+    let orderDir = 'desc';
+    if (req.query.order?.[0]) {
+      const order = req.query.order[0];
+      orderBy = req.query.columns?.[order.column]?.data ?? null;
+      orderDir = order.dir === 'asc' ? 'asc' : 'desc';
+    }
 
-    // Format and filter documents
-    let filteredDocs = allDocs.map(doc => {
+    const allTags = await paperlessService.getCachedTags();
+    const tagMap = new Map(allTags.map(tag => [tag.id, tag]));
+    const baseURL = process.env.PAPERLESS_API_URL.replace(/\/api$/, '');
+
+    const { rows, recordsTotal, recordsFiltered } = await documentModel.getPaginatedHistory(length, start, {
+      search,
+      tagId: Number.isNaN(tagFilter) ? null : tagFilter,
+      correspondent: correspondentFilter,
+      orderBy,
+      orderDir,
+      tags: allTags.map(tag => ({ id: tag.id, name: tag.name }))
+    });
+
+    const data = rows.map(doc => {
       const tagIds = doc.tags === '[]' ? [] : JSON.parse(doc.tags || '[]');
       const resolvedTags = tagIds.map(id => tagMap.get(parseInt(id))).filter(Boolean);
-      const baseURL = process.env.PAPERLESS_API_URL.replace(/\/api$/, '');
-
       resolvedTags.sort((a, b) => a.name.localeCompare(b.name));
-
       return {
         document_id: doc.document_id,
         title: doc.title || 'Modified: Invalid Date',
@@ -1238,51 +1245,9 @@ router.get('/api/history', async (req, res) => {
         correspondent: doc.correspondent || 'Not assigned',
         link: `${baseURL}/documents/${doc.document_id}/`
       };
-    }).filter(doc => {
-      const matchesSearch = !search || 
-        doc.title.toLowerCase().includes(search.toLowerCase()) ||
-        doc.correspondent.toLowerCase().includes(search.toLowerCase()) ||
-        doc.tags.some(tag => tag.name.toLowerCase().includes(search.toLowerCase()));
-
-      const matchesTag = !tagFilter || doc.tags.some(tag => tag.id === parseInt(tagFilter));
-      const matchesCorrespondent = !correspondentFilter || doc.correspondent === correspondentFilter;
-
-      return matchesSearch && matchesTag && matchesCorrespondent;
     });
 
-    // Sort documents if requested
-    if (req.query.order) {
-      const order = req.query.order[0];
-      const column = req.query.columns[order.column].data;
-      const dir = order.dir === 'asc' ? 1 : -1;
-
-      filteredDocs.sort((a, b) => {
-        if (a[column] == null) return 1;
-        if (b[column] == null) return -1;
-        if (column === 'created_at') {
-          return dir * (new Date(a[column]) - new Date(b[column]));
-        }
-        if (column === 'document_id') {
-          return dir * (a[column] - b[column]);
-        }
-        if (column === 'tags') {
-          let min_len = (a[column].length < b[column].length)? a[column].length : b[column].length;
-          for(let i=0; i < min_len; i+=1) {
-            let cmp = a[column][i].name.localeCompare(b[column][i].name)
-            if(cmp !== 0) return dir * cmp;
-          }
-          return dir * (a[column].length - b[column].length);
-        }
-        return dir * a[column].localeCompare(b[column]);
-      });
-    }
-
-    res.json({
-      draw: draw,
-      recordsTotal: allDocs.length,
-      recordsFiltered: filteredDocs.length,
-      data: filteredDocs.slice(start, start + length)
-    });
+    res.json({ draw, recordsTotal, recordsFiltered, data });
   } catch (error) {
     console.error('[ERROR] loading history data:', error);
     res.status(500).json({ error: 'Error loading history data' });
