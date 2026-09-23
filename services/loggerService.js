@@ -2,6 +2,46 @@ const fs = require('fs');
 const util = require('util');
 const path = require('path');
 
+const sinks = [];
+let originalConsole = null;
+
+const consoleMethodTypes = {
+    log: 'info',
+    error: 'error',
+    warn: 'warn',
+    info: 'info',
+    debug: 'debug'
+};
+
+function installConsoleOverride() {
+    if (originalConsole) {
+        return;
+    }
+
+    originalConsole = {
+        log: console.log,
+        error: console.error,
+        warn: console.warn,
+        info: console.info,
+        debug: console.debug
+    };
+
+    for (const [method, type] of Object.entries(consoleMethodTypes)) {
+        console[method] = (...args) => {
+            originalConsole[method](...args);
+            for (const sink of sinks) {
+                sink.write(sink.formatLogMessage(type, args));
+            }
+        };
+    }
+
+    process.on('exit', () => {
+        for (const sink of sinks) {
+            sink.flushSync();
+        }
+    });
+}
+
 class Logger {
     constructor(options = {}) {
         this.logFile = options.logFile || 'application.log';
@@ -9,25 +49,24 @@ class Logger {
         this.timestamp = options.timestamp !== false;
         this.format = options.format || 'txt';
         this.maxFileSize = options.maxFileSize || 1024 * 1024 * 10; // Standard: 10MB
-        
+
         if (!fs.existsSync(this.logDir)) {
             fs.mkdirSync(this.logDir, { recursive: true });
         }
 
         this.logPath = path.join(this.logDir, this.logFile);
-        
+
+        this.queue = [];
+        this.flushing = false;
+        this.fd = null;
+        this.size = 0;
+
         // Initialisiere Log-Datei
         this.initLogFile();
+        this.openFile();
 
-        this.originalConsole = {
-            log: console.log,
-            error: console.error,
-            warn: console.warn,
-            info: console.info,
-            debug: console.debug
-        };
-
-        this.overrideConsoleMethods();
+        sinks.push(this);
+        installConsoleOverride();
     }
 
     initLogFile() {
@@ -36,7 +75,7 @@ class Logger {
             // Lösche die alte Datei
             try {
                 fs.unlinkSync(this.logPath);
-            } catch (error) {
+            } catch {
                 // Ignoriere Fehler wenn Datei nicht existiert
             }
         }
@@ -53,6 +92,11 @@ class Logger {
             return stats.size >= this.maxFileSize;
         }
         return false;
+    }
+
+    openFile() {
+        this.fd = fs.openSync(this.logPath, 'a');
+        this.size = fs.fstatSync(this.fd).size;
     }
 
     initHtmlFile() {
@@ -133,7 +177,7 @@ class Logger {
 <body>
     <div class="log-container">
 `;
-        
+
         if (!fs.existsSync(this.logPath) || fs.statSync(this.logPath).size === 0) {
             fs.writeFileSync(this.logPath, htmlHeader);
         }
@@ -171,51 +215,73 @@ class Logger {
             .replace(/\s/g, "&nbsp;");
     }
 
-    writeToFile(message) {
-        // Prüfe Dateigröße vor dem Schreiben
-        if (this.checkFileSize()) {
-            // Lösche die alte Datei
-            fs.unlinkSync(this.logPath);
-            
-            // Bei HTML-Format müssen wir den Header neu schreiben
-            if (this.format === 'html') {
-                this.initHtmlFile();
-            }
-        }
-        
-        fs.appendFileSync(this.logPath, message);
+    write(message) {
+        this.queue.push(message);
+        this.scheduleFlush();
     }
 
-    overrideConsoleMethods() {
-        console.log = (...args) => {
-            const logMessage = this.formatLogMessage('info', args);
-            this.originalConsole.log(...args);
-            this.writeToFile(logMessage);
-        };
+    scheduleFlush() {
+        if (!this.flushing && this.fd !== null) {
+            this.flushing = true;
+            setImmediate(() => this.flush());
+        }
+    }
 
-        console.error = (...args) => {
-            const logMessage = this.formatLogMessage('error', args);
-            this.originalConsole.error(...args);
-            this.writeToFile(logMessage);
-        };
+    drainQueue() {
+        // Sammelt Nachrichten bis zum Dateigrößen-Limit
+        if (this.size >= this.maxFileSize) {
+            this.rotate();
+        }
+        let chunk = '';
+        while (this.queue.length && this.size < this.maxFileSize) {
+            const msg = this.queue.shift();
+            chunk += msg;
+            this.size += Buffer.byteLength(msg);
+        }
+        return chunk;
+    }
 
-        console.warn = (...args) => {
-            const logMessage = this.formatLogMessage('warn', args);
-            this.originalConsole.warn(...args);
-            this.writeToFile(logMessage);
-        };
+    flush() {
+        const chunk = this.drainQueue();
+        if (!chunk) {
+            this.flushing = false;
+            return;
+        }
+        fs.write(this.fd, chunk, (err) => {
+            if (err) {
+                process.stderr.write(`Logger write failed: ${err.message}\n`);
+            }
+            this.flushing = false;
+            if (this.queue.length) {
+                this.scheduleFlush();
+            }
+        });
+    }
 
-        console.info = (...args) => {
-            const logMessage = this.formatLogMessage('info', args);
-            this.originalConsole.info(...args);
-            this.writeToFile(logMessage);
-        };
+    rotate() {
+        fs.closeSync(this.fd);
+        try {
+            fs.unlinkSync(this.logPath);
+        } catch {
+            // Ignoriere Fehler wenn Datei nicht existiert
+        }
 
-        console.debug = (...args) => {
-            const logMessage = this.formatLogMessage('debug', args);
-            this.originalConsole.debug(...args);
-            this.writeToFile(logMessage);
-        };
+        // Bei HTML-Format müssen wir den Header neu schreiben
+        if (this.format === 'html') {
+            this.initHtmlFile();
+        }
+        this.openFile();
+    }
+
+    flushSync() {
+        while (this.queue.length) {
+            const chunk = this.drainQueue();
+            if (!chunk) {
+                break;
+            }
+            fs.writeSync(this.fd, chunk);
+        }
+        this.flushing = false;
     }
 
     closeHtmlFile() {
@@ -226,14 +292,27 @@ class Logger {
     </button>
 </body>
 </html>`;
-            this.writeToFile(htmlFooter);
+            this.write(htmlFooter);
+            this.flushSync();
         }
     }
 
     restore() {
-        Object.assign(console, this.originalConsole);
+        const index = sinks.indexOf(this);
+        if (index !== -1) {
+            sinks.splice(index, 1);
+        }
         if (this.format === 'html') {
             this.closeHtmlFile();
+        }
+        this.flushSync();
+        if (this.fd !== null) {
+            fs.closeSync(this.fd);
+            this.fd = null;
+        }
+        if (sinks.length === 0 && originalConsole) {
+            Object.assign(console, originalConsole);
+            originalConsole = null;
         }
     }
 }
