@@ -188,9 +188,22 @@ async function writePromptToFile(systemPrompt, truncatedContent, filePath = './l
     }
 }
 
+async function runWithConcurrency(items, limit, worker) {
+    const concurrency = Math.max(1, Math.min(Number(limit) || 1, items.length || 1));
+    let nextIndex = 0;
+    const runNext = async () => {
+        while (nextIndex < items.length) {
+            const index = nextIndex++;
+            await worker(items[index], index);
+        }
+    };
+    await Promise.all(Array.from({ length: concurrency }, runNext));
+}
+
 module.exports = {
     calculateTokens,
     calculateTotalPromptTokens,
     truncateToTokenLimit,
-    writePromptToFile
+    writePromptToFile,
+    runWithConcurrency
 };

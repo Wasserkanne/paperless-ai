@@ -7,6 +7,7 @@ const paperlessService = require('./services/paperlessService');
 const AIServiceFactory = require('./services/aiServiceFactory');
 const documentModel = require('./models/document');
 const setupService = require('./services/setupService');
+const { runWithConcurrency } = require('./services/serviceUtils');
 const setupRoutes = require('./routes/setup');
 
 // Add environment variables for RAG service if not already set
@@ -368,21 +369,25 @@ async function scanInitial() {
     // Extract tag names from tag objects
     const existingTagNames = existingTags.map(tag => tag.name);
 
-    for (const doc of documents) {
-      try {
-        const result = await processDocument(doc, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
-        if (!result) continue;
-
-        const { analysis, originalData } = result;
-        const updateData = await buildUpdateData(analysis, doc);
-        await saveDocumentChanges(doc.id, updateData, analysis, originalData);
-      } catch (error) {
-        console.error(`[ERROR] processing document ${doc.id}:`, error);
-      }
-    }
+    await processDocuments(documents, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
   } catch (error) {
     console.error('[ERROR] during initial document scan:', error);
   }
+}
+
+async function processDocuments(documents, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId) {
+  await runWithConcurrency(documents, config.scanConcurrency, async (doc) => {
+    try {
+      const result = await processDocument(doc, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
+      if (!result) return;
+
+      const { analysis, originalData } = result;
+      const updateData = await buildUpdateData(analysis, doc);
+      await saveDocumentChanges(doc.id, updateData, analysis, originalData);
+    } catch (error) {
+      console.error(`[ERROR] processing document ${doc.id}:`, error);
+    }
+  });
 }
 
 async function scanDocuments() {
@@ -410,18 +415,7 @@ async function scanDocuments() {
     // Extract tag names from tag objects
     const existingTagNames = existingTags.map(tag => tag.name);
 
-    for (const doc of documents) {
-      try {
-        const result = await processDocument(doc, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
-        if (!result) continue;
-
-        const { analysis, originalData } = result;
-        const updateData = await buildUpdateData(analysis, doc);
-        await saveDocumentChanges(doc.id, updateData, analysis, originalData);
-      } catch (error) {
-        console.error(`[ERROR] processing document ${doc.id}:`, error);
-      }
-    }
+    await processDocuments(documents, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
   } catch (error) {
     console.error('[ERROR]  during document scan:', error);
   } finally {

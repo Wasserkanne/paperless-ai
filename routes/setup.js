@@ -9,6 +9,7 @@ const documentModel = require('../models/document.js');
 const AIServiceFactory = require('../services/aiServiceFactory');
 const debugService = require('../services/debugService.js');
 const configFile = require('../config/config.js');
+const { runWithConcurrency } = require('../services/serviceUtils.js');
 const ChatService = require('../services/chatService.js');
 const documentsService = require('../services/documentsService.js');
 const RAGService = require('../services/ragService.js');
@@ -1522,10 +1523,10 @@ try {
         // Extract tag names from tag objects
         const existingTagNames = existingTags.map(tag => tag.name);
     
-        for (const doc of documents) {
+        await runWithConcurrency(documents, configFile.scanConcurrency, async (doc) => {
           try {
             const result = await processDocument(doc, existingTagNames, existingCorrespondentList, existingDocumentTypesList, ownUserId);
-            if (!result) continue;
+            if (!result) return;
     
             const { analysis, originalData } = result;
             const updateData = await buildUpdateData(analysis, doc);
@@ -1533,7 +1534,7 @@ try {
           } catch (error) {
             console.error(`[ERROR] processing document ${doc.id}:`, error);
           }
-        }
+        });
       } catch (error) {
         console.error('[ERROR]  during document scan:', error);
       } finally {
