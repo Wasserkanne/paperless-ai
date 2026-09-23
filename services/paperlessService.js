@@ -419,48 +419,15 @@ class PaperlessService {
       return [];
     }
 
-    let tags = [];
-    let page = 1;
-    let hasMore = true;
-
-    while (hasMore) {
-      try {
-        const params = {
-          page,
-          page_size: 100,  // Maximale Seitengröße für effizientes Laden
-          ordering: 'name'  // Optional: Sortierung nach Namen
-        };
-
-        const response = await this.client.get('/tags/', { params });
-        
-        if (!response?.data?.results || !Array.isArray(response.data.results)) {
-          console.error(`[DEBUG] Invalid API response on page ${page}`);
-          break;
-        }
-
-        tags = tags.concat(response.data.results);
-        hasMore = response.data.next !== null;
-        page++;
-
-        console.log(
-          `[DEBUG] Fetched page ${page-1}, got ${response.data.results.length} tags. ` +
-          `[DEBUG] Total so far: ${tags.length}`
-        );
-
-        // Kleine Verzögerung um die API nicht zu überlasten
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-      } catch (error) {
-        console.error(`[ERRRO] fetching tags page ${page}:`, error.message);
-        if (error.response) {
-          console.error('[DEBUG] Response status:', error.response.status);
-          console.error('[DEBUG] Response data:', error.response.data);
-        }
-        break;
-      }
+    try {
+      await this.ensureTagCache();
+    } catch (error) {
+      console.error('[ERROR] fetching tags:', error.message);
+      return [];
     }
 
-    return tags;
+    return Array.from(this.tagCache.values())
+      .sort((a, b) => a.name.localeCompare(b.name));
   }
 
   async getTagCount() {
@@ -698,7 +665,9 @@ class PaperlessService {
         );
 
         // Kleine Verzögerung um die API nicht zu überlasten
-        await new Promise(resolve => setTimeout(resolve, 100));
+        if (hasMore) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
 
       } catch (error) {
         console.error(`[ERROR]  fetching documents page ${page}:`, error.message);
@@ -808,7 +777,9 @@ class PaperlessService {
         );
 
         // Kleine Verzögerung um die API nicht zu überlasten
-        await new Promise(resolve => setTimeout(resolve, 100));
+        if (hasMore) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
 
       } catch (error) {
         console.error(`[ERROR] fetching documents page ${page}:`, error.message);
@@ -1203,6 +1174,12 @@ async getOrCreateDocumentType(name) {
   async getTagTextFromId(tagId) {
     this.initialize();
     try {
+      await this.ensureTagCache();
+      for (const tag of this.tagCache.values()) {
+        if (tag.id === tagId) {
+          return tag.name;
+        }
+      }
       const response = await this.client.get(`/tags/${tagId}/`);
       return response.data.name;
     } catch (error) {
