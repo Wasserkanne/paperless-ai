@@ -1529,7 +1529,7 @@ try {
             if (!result) return;
     
             const { analysis, originalData } = result;
-            const updateData = await buildUpdateData(analysis, doc);
+            const updateData = await buildUpdateData(analysis, doc, originalData);
             await saveDocumentChanges(doc.id, updateData, analysis, originalData);
           } catch (error) {
             console.error(`[ERROR] processing document ${doc.id}:`, error);
@@ -1552,7 +1552,14 @@ async function processDocument(doc, existingTags, existingCorrespondentList, exi
   if (isProcessed) return null;
   await documentModel.setProcessingStatus(doc.id, doc.title, 'processing');
 
-  const documentEditable = await paperlessService.getPermissionOfDocument(doc.id);
+  let originalData;
+  try {
+    originalData = await paperlessService.getDocument(doc.id);
+  } catch (error) {
+    console.error(`[ERROR] No Permission to edit document ${doc.id}:`, error.message);
+    return null;
+  }
+  const documentEditable = originalData.user_can_change;
   if (!documentEditable) {
     console.log(`[DEBUG] Document belongs to: ${documentEditable}, skipping analysis`);
     console.log(`[DEBUG] Document ${doc.id} Not Editable by Paper-Ai User, skipping analysis`);
@@ -1561,10 +1568,7 @@ async function processDocument(doc, existingTags, existingCorrespondentList, exi
     console.log(`[DEBUG] Document ${doc.id} rights for AI User - processed`);
   }
 
-  let [content, originalData] = await Promise.all([
-    paperlessService.getDocumentContent(doc.id),
-    paperlessService.getDocument(doc.id)
-  ]);
+  let content = originalData.content;
 
   if (!content || !content.length >= 10) {
     console.log(`[DEBUG] Document ${doc.id} has no content, skipping analysis`);
@@ -1611,7 +1615,7 @@ async function processDocument(doc, existingTags, existingCorrespondentList, exi
   return { analysis, originalData };
 }
 
-async function buildUpdateData(analysis, doc) {
+async function buildUpdateData(analysis, doc, originalData) {
   const updateData = {};
 
   // Create options object with restriction settings
@@ -1668,7 +1672,7 @@ async function buildUpdateData(analysis, doc) {
     const processedFields = [];
 
     // Get existing custom fields
-    const existingFields = await paperlessService.getExistingCustomFields(doc.id);
+    const existingFields = originalData?.custom_fields || [];
     console.log(`[DEBUG] Found existing fields:`, existingFields);
 
     // Keep track of which fields we've processed to avoid duplicates
@@ -1730,7 +1734,7 @@ async function saveDocumentChanges(docId, updateData, analysis, originalData) {
   
   await Promise.all([
     documentModel.saveOriginalData(docId, originalTags, originalCorrespondent, originalTitle),
-    paperlessService.updateDocument(docId, updateData),
+    paperlessService.updateDocument(docId, updateData, originalData),
     documentModel.addProcessedDocument(docId, updateData.title),
     documentModel.addOpenAIMetrics(
       docId, 
@@ -2383,7 +2387,7 @@ async function processQueue(customPrompt) {
         if (!result) continue;
 
         const { analysis, originalData } = result;
-        const updateData = await buildUpdateData(analysis, doc);
+        const updateData = await buildUpdateData(analysis, doc, originalData);
         await saveDocumentChanges(doc.id, updateData, analysis, originalData);
       } catch (error) {
         console.error(`[ERROR] Failed to process document ${doc.id}:`, error);

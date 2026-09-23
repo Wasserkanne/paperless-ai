@@ -1238,11 +1238,11 @@ async getOrCreateDocumentType(name) {
   }
 
 
-  async updateDocument(documentId, updates) {
+  async updateDocument(documentId, updates, existingDoc = null) {
     this.initialize();
     if (!this.client) return;
     try {
-      const currentDoc = await this.getDocument(documentId);
+      const currentDoc = existingDoc ?? await this.getDocument(documentId);
       
       if (updates.tags) {
         console.log(`[DEBUG] Current tags for document ${documentId}:`, currentDoc.tags);
@@ -1317,9 +1317,9 @@ async getOrCreateDocumentType(name) {
       }
       
       console.log('[DEBUG] Final update data:', updateData);
-      await this.client.patch(`/documents/${documentId}/`, updateData);
+      const response = await this.client.patch(`/documents/${documentId}/`, updateData);
       console.log(`[SUCCESS] Updated document ${documentId} with:`, updateData);
-      return await this.getDocument(documentId);
+      return response.data;
     } catch (error) {
       console.log(error);
       console.error(`[ERROR] updating document ${documentId}:`, error.message);
