@@ -276,6 +276,9 @@ async function showCorrespondentDetails() {
 document.addEventListener('DOMContentLoaded', () => {
     window.themeManager = new ThemeManager();
     window.navigationManager = new NavigationManager();
-    window.chartManager = new ChartManager();
+    // ChartManager depends on dashboardData, which only exists on the dashboard view
+    if (window.dashboardData) {
+        window.chartManager = new ChartManager();
+    }
     window.modalManager = new ModalManager();
 });

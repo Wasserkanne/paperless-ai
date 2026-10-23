@@ -8,6 +8,8 @@ const axios = require('axios');
 const OpenAI = require('openai');
 const config = require('../config/config');
 const AzureOpenAI = require('openai').AzureOpenAI;
+const fs = require('fs').promises;
+const os = require('os');
 const emptyVar = null;
 
 class ManualService {
@@ -78,11 +80,11 @@ class ManualService {
         let jsonContent = response.choices[0].message.content;
         jsonContent = jsonContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         
-        const parsedResponse = JSON.parse(jsonContent);
+        let parsedResponse;
         try {
             parsedResponse = JSON.parse(jsonContent);
-            fs.appendFile('./logs/response.txt', jsonContent, (err) => {
-                if (err) throw err;
+            fs.appendFile('./logs/response.txt', jsonContent).catch(err => {
+                console.error('Failed to append response log:', err.message);
             });
         } catch (error) {
             console.error('Failed to parse JSON response:', error);
@@ -126,11 +128,11 @@ class ManualService {
         let jsonContent = response.choices[0].message.content;
         jsonContent = jsonContent.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
         
-        const parsedResponse = JSON.parse(jsonContent);
+        let parsedResponse;
         try {
             parsedResponse = JSON.parse(jsonContent);
-            fs.appendFile('./logs/response.txt', jsonContent, (err) => {
-                if (err) throw err;
+            fs.appendFile('./logs/response.txt', jsonContent).catch(err => {
+                console.error('Failed to append response log:', err.message);
             });
         } catch (error) {
             console.error('Failed to parse JSON response:', error);
@@ -216,15 +218,18 @@ class ManualService {
             return Math.ceil(prompt.length / 4);
         };
         
+        // Include the document content in the prompt so Ollama analyses it
+        const fullPrompt = prompt + '\n\n' + content;
+
         const { freeMemoryMB } = await getAvailableMemory();
         const expectedResponseTokens = 1024;
-        const promptTokenCount = calculatePromptTokenCount(prompt);
+        const promptTokenCount = calculatePromptTokenCount(fullPrompt);
         
         const numCtx = calculateNumCtx(promptTokenCount, expectedResponseTokens);
         
         const response = await this.ollama.post(`${config.ollama.apiUrl}/api/generate`, {
             model: config.ollama.model,
-            prompt: prompt,
+            prompt: fullPrompt,
             stream: false,
             options: {
             temperature: 0.7,

@@ -139,9 +139,10 @@ class OllamaService {
             return {
                 document: parsedResponse,
                 metrics: {
-                    promptTokens: 0,  // Ollama doesn't provide token metrics
-                    completionTokens: 0,
-                    totalTokens: 0
+                    // Ollama reports prompt and response token counts
+                    promptTokens: response.prompt_eval_count || 0,
+                    completionTokens: response.eval_count || 0,
+                    totalTokens: (response.prompt_eval_count || 0) + (response.eval_count || 0)
                 },
                 truncated: false
             };
@@ -190,9 +191,10 @@ class OllamaService {
             return {
                 document: parsedResponse,
                 metrics: {
-                    promptTokens: 0,
-                    completionTokens: 0,
-                    totalTokens: 0
+                    // Ollama reports prompt and response token counts
+                    promptTokens: response.prompt_eval_count || 0,
+                    completionTokens: response.eval_count || 0,
+                    totalTokens: (response.prompt_eval_count || 0) + (response.eval_count || 0)
                 },
                 truncated: false
             };
@@ -244,8 +246,15 @@ class OllamaService {
 
         // Get system prompt based on configuration
         if (config.useExistingData === 'yes' && config.restrictToExistingTags === 'no' && config.restrictToExistingCorrespondents === 'no') {
-            // Format existing tags
-            const existingTagsList = existingTags.join(', ');
+            // Format existing tags - handle both array of objects and array of strings
+            const existingTagsList = existingTags
+                .filter(Boolean)  // Remove any null/undefined entries
+                .map(tag => {
+                    if (typeof tag === 'string') return tag;
+                    return tag?.name || '';
+                })
+                .filter(name => name.length > 0)  // Remove empty strings
+                .join(', ');
 
             // Format existing correspondents - handle both array of objects and array of strings
             const existingCorrespondentList = correspondentList
@@ -274,8 +283,8 @@ class OllamaService {
             ` + process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
             promptTags = '';
         } else {
-            config.mustHavePrompt = config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
-            systemPrompt = process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt;
+            // Replace placeholders on a local copy so the shared config template stays intact
+            systemPrompt = process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
             promptTags = '';
         }
 
@@ -323,7 +332,7 @@ class OllamaService {
      * @param {number} maxTokens - Maximum tokens allowed for external data (default: 500)
      * @returns {string} - Validated and potentially truncated data string
      */
-    async _validateAndTruncateExternalApiData(apiData, maxTokens = 500) {
+    _validateAndTruncateExternalApiData(apiData, maxTokens = 500) {
         if (!apiData) {
             return null;
         }
@@ -599,7 +608,9 @@ class OllamaService {
                         correspondent: sanitizedResult.correspondent || null,
                         title: sanitizedResult.title || null,
                         document_date: sanitizedResult.document_date || null,
-                        language: sanitizedResult.language || null
+                        document_type: sanitizedResult.document_type || null,
+                        language: sanitizedResult.language || null,
+                        custom_fields: sanitizedResult.custom_fields || null
                     };
                 } catch (finalError) {
                     console.error('Final JSON parsing failed after sanitization. This happens when the JSON structure is too complex or invalid. That indicates an issue with the generated JSON string by Ollama. Switch to OpenAI for better results or fine tune your prompt.');
@@ -621,7 +632,9 @@ class OllamaService {
         return jsonStr
             .replace(/,\s*}/g, '}') // Remove trailing commas before closing braces
             .replace(/,\s*]/g, ']') // Remove trailing commas before closing brackets
-            .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?\s*:/g, '"$2":'); // Ensure property names are quoted
+            // Quote bare property names only at object entry positions (after
+            // "{" or ","), so values containing colons like times or URLs stay intact
+            .replace(/([{,]\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*:)/g, '$1"$2"$3');
     }
 
     /**
@@ -630,13 +643,8 @@ class OllamaService {
      * @param {Object} response - Response object
      */
     async _logPromptAndResponse(prompt, response) {
-        const content = '================================================================================'
-            + prompt + "\n\n"
-            + JSON.stringify(response)
-            + '\n\n'
-            + '================================================================================\n\n';
-
-        await writePromptToFile(content);
+        // writePromptToFile expects the system prompt and the user content separately
+        await writePromptToFile(prompt, JSON.stringify(response));
     }
 
     /**
@@ -688,11 +696,16 @@ class OllamaService {
             const response = await this.client.get(`${this.apiUrl}/api/ps`);
             if (response.status === 200) {
                 const data = response.data;
-                // Ensure data is an array and has at least one model
-                let modelName = null;
-                if (Array.isArray(data.models) && data.models.length > 0) {
-                    modelName = data.models[0].name;
-                }
+                const loadedModels = Array.isArray(data.models)
+                    ? data.models.map(m => m.name).filter(Boolean)
+                    : [];
+                // Prefer the configured model when it is loaded, otherwise
+                // fall back to the first loaded model
+                const configuredModel = process.env.OLLAMA_MODEL;
+                const modelName = configuredModel && loadedModels.some(name =>
+                    name === configuredModel || name.startsWith(configuredModel + ':'))
+                    ? configuredModel
+                    : (loadedModels[0] || null);
                 console.log('Ollama model name:', modelName);
                 return { status: 'ok', model: modelName };
             }

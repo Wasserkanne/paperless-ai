@@ -252,7 +252,7 @@ class ChatService {
   async cleanup() {
     try {
       for (const documentId of this.chats.keys()) {
-        await this.deleteChat(documentId);
+        this.chats.delete(documentId);
       }
       if (fs.existsSync(this.tempDir)) {
         await fs.promises.rmdir(this.tempDir, { recursive: true });

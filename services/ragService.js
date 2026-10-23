@@ -4,6 +4,11 @@ const config = require('../config/config');
 const AIServiceFactory = require('./aiServiceFactory');
 const paperlessService = require('./paperlessService');
 
+// Timeouts so a hanging RAG service cannot block requests forever
+const RAG_STATUS_TIMEOUT = 15000;
+const RAG_QUERY_TIMEOUT = 120000;
+const RAG_INDEX_TIMEOUT = 300000;
+
 class RagService {
   constructor() {
     this.baseUrl = process.env.RAG_SERVICE_URL || 'http://localhost:8000';
@@ -15,7 +20,7 @@ class RagService {
    */
   async checkStatus() {
     try {
-      const response = await axios.get(`${this.baseUrl}/status`);
+      const response = await axios.get(`${this.baseUrl}/status`, { timeout: RAG_STATUS_TIMEOUT });
       //make test call to the LLM service to check if it is available
       return response.data;
     } catch (error) {
@@ -40,7 +45,7 @@ class RagService {
       const response = await axios.post(`${this.baseUrl}/search`, {
         query,
         ...filters
-      });
+      }, { timeout: RAG_QUERY_TIMEOUT });
       return response.data;
     } catch (error) {
       console.error('Error searching documents:', error);
@@ -59,7 +64,7 @@ class RagService {
       const response = await axios.post(`${this.baseUrl}/context`, { 
         question,
         max_sources: 5
-      });
+      }, { timeout: RAG_QUERY_TIMEOUT });
       
       const { context, sources } = response.data;
       
@@ -137,7 +142,7 @@ class RagService {
       const response = await axios.post(`${this.baseUrl}/indexing/start`, { 
         force, 
         background: true 
-      });
+      }, { timeout: RAG_INDEX_TIMEOUT });
       return response.data;
     } catch (error) {
       console.error('Error indexing documents:', error);
@@ -151,7 +156,7 @@ class RagService {
    */
   async checkForUpdates() {
     try {
-      const response = await axios.post(`${this.baseUrl}/indexing/check`);
+      const response = await axios.post(`${this.baseUrl}/indexing/check`, null, { timeout: RAG_STATUS_TIMEOUT });
       return response.data;
     } catch (error) {
       console.error('Error checking for updates:', error);
@@ -165,7 +170,7 @@ class RagService {
    */
   async getIndexingStatus() {
     try {
-      const response = await axios.get(`${this.baseUrl}/indexing/status`);
+      const response = await axios.get(`${this.baseUrl}/indexing/status`, { timeout: RAG_STATUS_TIMEOUT });
       return response.data;
     } catch (error) {
       console.error('Error getting indexing status:', error);
@@ -180,7 +185,11 @@ class RagService {
    */
   async initialize(force = false) {
     try {
-      const response = await axios.post(`${this.baseUrl}/initialize`, { force });
+      // The FastAPI endpoint expects force as a query parameter, not a body
+      const response = await axios.post(`${this.baseUrl}/initialize`, null, {
+        params: { force },
+        timeout: RAG_INDEX_TIMEOUT
+      });
       return response.data;
     } catch (error) {
       console.error('Error initializing RAG service:', error);

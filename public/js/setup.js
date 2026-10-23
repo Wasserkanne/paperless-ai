@@ -696,6 +696,8 @@ class PasswordManager {
 
                 if (!passwordStrength.isValid || !passwordsMatch) {
                     e.preventDefault();
+                    // Mark the form so the separate submit listener aborts as well
+                    this.form.dataset.validationFailed = 'true';
                     Swal.fire({
                         icon: 'error',
                         title: 'Invalid Password',
@@ -706,6 +708,8 @@ class PasswordManager {
                     return false;
                 }
             }
+
+            delete this.form.dataset.validationFailed;
 
             // Call the original submit handler if it exists
             if (originalSubmit) return originalSubmit.call(this.form, e);
@@ -856,6 +860,12 @@ document.addEventListener('DOMContentLoaded', function() {
     if (setupForm) {
         setupForm.addEventListener('submit', async function(e) {
             e.preventDefault();
+            
+            // Abort when the password validation in the onsubmit handler failed
+            if (setupForm.dataset.validationFailed === 'true') {
+                delete setupForm.dataset.validationFailed;
+                return;
+            }
             
             // Check if processing all documents without specific tags
             const showTags = document.getElementById('showTags').value;

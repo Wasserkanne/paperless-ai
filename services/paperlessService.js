@@ -703,19 +703,39 @@ class PaperlessService {
      * @note       This method is used to get all Document IDs for further processing.
      */
     this.initialize();
-    try {
-      const response = await this.client.get('/documents/', {
-        params: { 
-          page,
-          page_size: 100,
-          fields: 'id',
-        }
-      });
-      return response.data.results.map(doc => doc.id);
-    } catch (error) {
-      console.error('[ERROR] fetching document IDs:', error.message);
+    if (!this.client) {
+      console.error('[DEBUG] Client not initialized');
       return [];
     }
+
+    // Collect IDs from every page instead of a single request
+    const documentIds = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore) {
+      try {
+        const response = await this.client.get('/documents/', {
+          params: {
+            page,
+            page_size: 100,
+            fields: 'id',
+          }
+        });
+        const results = response?.data?.results;
+        if (!Array.isArray(results)) {
+          console.error(`[ERROR] Invalid API response on page ${page}`);
+          break;
+        }
+        documentIds.push(...results.map(doc => doc.id));
+        hasMore = response.data.next !== null;
+        page++;
+      } catch (error) {
+        console.error(`[ERROR] fetching document IDs page ${page}:`, error.message);
+        break;
+      }
+    }
+    return documentIds;
   }
 
   async getAllDocumentIdsScan() {
@@ -851,12 +871,29 @@ class PaperlessService {
     
     this.initialize();
     try {
-      const response = await this.client.get('/documents/', {
-        params: {
-          fields: 'id,title,tags,correspondent,created'
+      // Paginate so documents beyond the first API page are included
+      const documents = [];
+      let page = 1;
+      let hasMore = true;
+
+      while (hasMore) {
+        const response = await this.client.get('/documents/', {
+          params: {
+            page,
+            page_size: 100,
+            fields: 'id,title,tags,correspondent,created'
+          }
+        });
+        const results = response?.data?.results;
+        if (!Array.isArray(results)) {
+          console.error(`[ERROR] Invalid API response on page ${page}`);
+          break;
         }
-      });
-      return response.data.results;
+        documents.push(...results);
+        hasMore = response.data.next !== null;
+        page++;
+      }
+      return documents;
     } catch (error) {
       console.error('[ERROR] fetching documents with metadata:', error.message);
       return [];
@@ -874,29 +911,30 @@ class PaperlessService {
     
     this.initialize();
     try {
-      let response;
+      // Accumulate every page and only send valid query parameters
+      const documents = [];
       let page = 1;
       let hasMore = true;
-  
+
       while (hasMore) {
         try {
-          const params = {
-            params: { fields: 'id,title,tags,correspondent,created,content' },
-            page,
-            page_size: 100,  // Maximale Seitengröße für effizientes Laden
-            ordering: 'name'  // Optional: Sortierung nach Namen
-          };
-
-          response = await this.client.get('/documents/', { params });
+          const response = await this.client.get('/documents/', {
+            params: {
+              page,
+              page_size: 100,
+              fields: 'id,title,tags,correspondent,created,content'
+            }
+          });
 
           if (!response?.data?.results || !Array.isArray(response.data.results)) {
             console.error(`[DEBUG] Invalid API response on page ${page}`);
             break;
           }
 
+          documents.push(...response.data.results);
           hasMore = response.data.next !== null;
           page++;
-        
+
         } catch (error) {
           console.error(`[ERROR] fetching documents page ${page}:`, error.message);
           if (error.response) {
@@ -904,8 +942,8 @@ class PaperlessService {
           }
           break;
         }
-      }  
-      return response.data.results;
+      }
+      return documents;
     } catch (error) {
       console.error('[ERROR] fetching documents with metadata:', error.message);
       return [];
@@ -1040,11 +1078,10 @@ async searchForExistingCorrespondent(correspondent) {
             console.log(`[DEBUG] Created new correspondent "${name}" with ID ${createResponse.data.id}`);
             return createResponse.data;
         } catch (createError) {
-            if (createError.response?.status === 400 && 
-                createError.response?.data?.error?.includes('unique constraint')) {
-              
-                // Race condition check - another process might have created it
-                const retryResponse = await this.client.get('/correspondents/', {
+            if (createError.response?.status === 400) {
+              // DRF reports duplicate names as field errors without a generic
+              // "error" key, so treat any 400 as a possible constraint conflict
+              const retryResponse = await this.client.get('/correspondents/', {
                     params: { name: name }
                 });
               
@@ -1124,11 +1161,10 @@ async getOrCreateDocumentType(name) {
           console.log(`[DEBUG] Created new document type "${name}" with ID ${createResponse.data.id}`);
           return createResponse.data;
       } catch (createError) {
-          if (createError.response?.status === 400 && 
-              createError.response?.data?.error?.includes('unique constraint')) {
-            
-              // Race condition check
-              const retryResponse = await this.client.get('/document_types/', {
+          if (createError.response?.status === 400) {
+            // DRF reports duplicate names as field errors without a generic
+            // "error" key, so treat any 400 as a possible constraint conflict
+            const retryResponse = await this.client.get('/document_types/', {
                   params: { name: name }
               });
             

@@ -9,7 +9,7 @@ const documentModel = require('../models/document.js');
 const AIServiceFactory = require('../services/aiServiceFactory');
 const debugService = require('../services/debugService.js');
 const configFile = require('../config/config.js');
-const { runWithConcurrency } = require('../services/serviceUtils.js');
+const { runWithConcurrency, jwtSecret: JWT_SECRET } = require('../services/serviceUtils.js');
 const ChatService = require('../services/chatService.js');
 const documentsService = require('../services/documentsService.js');
 const RAGService = require('../services/ragService.js');
@@ -19,7 +19,6 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const cookieParser = require('cookie-parser');
 const { authenticateJWT, isAuthenticated } = require('./auth.js');
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const customService = require('../services/customService.js');
 const config = require('../config/config.js');
 require('dotenv').config({ path: '../data/.env' });
@@ -489,6 +488,7 @@ router.get('/sampleData/:id', async (req, res) => {
     const document = await paperlessService.getDocument(req.params.id);
     const correspondents = await paperlessService.getCorrespondentsFromDocument(document.id);
 
+    res.json({ document, correspondents });
   } catch (error) {
     console.error('[ERRO] loading sample data:', error);
     res.status(500).json({ error: 'Error loading sample data' });
@@ -547,11 +547,11 @@ router.get('/playground', protectApiRoute, async (req, res) => {
       paperlessUrl
     } = await documentsService.getDocumentsWithMetadata();
 
-    //limit documents to 16 items
-    documents.length = 16;
+    //limit documents to 16 items without creating sparse array holes
+    const limitedDocuments = documents.slice(0, 16);
 
     res.render('playground', {
-      documents,
+      documents: limitedDocuments,
       tagNames,
       correspondentNames,
       paperlessUrl,
@@ -1535,7 +1535,8 @@ async function processDocument(doc, existingTags, existingCorrespondentList, exi
 
   let content = originalData.content;
 
-  if (!content || !content.length >= 10) {
+  // Fixed precedence: skip documents with no or too-short content
+  if (!content || content.length < 10) {
     console.log(`[DEBUG] Document ${doc.id} has no content, skipping analysis`);
     return null;
   }
@@ -2344,11 +2345,16 @@ async function processQueue(customPrompt) {
 
     const existingDocumentTypesList = existingDocumentTypes.map(docType => docType.name);
 
+    // Align data shapes with the main scan path: the AI services expect
+    // plain tag and correspondent name strings, not API objects
+    const existingTagNames = existingTags.map(tag => tag.name);
+    const existingCorrespondentNames = existingCorrespondentList.map(correspondent => correspondent.name);
+
     while (documentQueue.length > 0) {
       const doc = documentQueue.shift();
       
       try {
-        const result = await processDocument(doc, existingTags, existingCorrespondentList, existingDocumentTypesList, ownUserId, customPrompt);
+        const result = await processDocument(doc, existingTagNames, existingCorrespondentNames, existingDocumentTypesList, ownUserId, customPrompt);
         if (!result) continue;
 
         const { analysis, originalData } = result;

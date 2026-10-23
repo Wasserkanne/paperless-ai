@@ -1,6 +1,13 @@
 // Prompt Rating System and Analyzer combined in one file
 class PromptRatingSystem {
     constructor() {
+        // Reuse the single instance so UI elements and event listeners
+        // are never duplicated when the class is constructed twice
+        if (PromptRatingSystem.instance) {
+            return PromptRatingSystem.instance;
+        }
+        PromptRatingSystem.instance = this;
+
         this.localStorageKey = 'savedPrompts';
         this.savedPrompts = this.loadSavedPrompts();
         this.currentPrompt = '';
@@ -612,7 +619,8 @@ class PlaygroundAnalyzer {
                 },
                 body: JSON.stringify({
                     content: contentData.content,
-                    existingTags: existingTags.map(t => t.id),
+                    // The AI prompt works with tag names, not IDs
+                    existingTags: existingTags.map(t => t.name),
                     correspondent: existingCorrespondent,
                     prompt: prompt,
                     documentId: docId
@@ -645,15 +653,16 @@ class PlaygroundAnalyzer {
         if (analysisResult.tags && analysisResult.tags.length > 0) {
             const tagsContainer = docCard.querySelector('.tags-container, div[class*="flex flex-wrap gap"]');
             if (tagsContainer) {
-                const existingTagIds = existing.existingTags.map(t => t.id);
+                // AI responses contain tag names, so compare against names
+                const existingTagNames = existing.existingTags.map(t => t.name);
                 
                 // Neue Tags hinzufügen
-                analysisResult.tags.forEach(tagId => {
-                    if (!existingTagIds.includes(tagId)) {
+                analysisResult.tags.forEach(tagName => {
+                    if (!existingTagNames.includes(tagName)) {
                         const tagSpan = document.createElement('span');
                         tagSpan.className = 'tag new-tag text-xs px-2 py-1 rounded-full text-white';
-                        tagSpan.dataset.tagId = tagId;
-                        tagSpan.textContent = tagId;
+                        tagSpan.dataset.tagId = tagName;
+                        tagSpan.textContent = tagName;
                         tagsContainer.appendChild(tagSpan);
                     }
                 });

@@ -170,6 +170,7 @@ function toggleTheme() {
 
 function setTheme(theme) {
     const body = document.body;
+    // The chat view only renders a single theme icon; both may be missing
     const lightIcon = document.getElementById('lightIcon');
     const darkIcon = document.getElementById('darkIcon');
     
@@ -177,11 +178,11 @@ function setTheme(theme) {
     localStorage.setItem('theme', theme);
     
     if (theme === 'dark') {
-        lightIcon.classList.add('hidden');
-        darkIcon.classList.remove('hidden');
+        if (lightIcon) lightIcon.classList.add('hidden');
+        if (darkIcon) darkIcon.classList.remove('hidden');
     } else {
-        lightIcon.classList.remove('hidden');
-        darkIcon.classList.add('hidden');
+        if (lightIcon) lightIcon.classList.remove('hidden');
+        if (darkIcon) darkIcon.classList.add('hidden');
     }
 }
 
