@@ -80,7 +80,8 @@ const insertDocument = db.prepare(`
   INSERT INTO processed_documents (document_id, title) 
   VALUES (?, ?)
   ON CONFLICT(document_id) DO UPDATE SET
-    last_updated = CURRENT_TIMESTAMP
+    last_updated = CURRENT_TIMESTAMP,
+    title = excluded.title
   WHERE document_id = ?
 `);
 
@@ -140,7 +141,7 @@ const clearProcessingStatus = db.prepare(`
 
 const getActiveProcessing = db.prepare(`
   SELECT * FROM processing_status 
-  WHERE start_time >= datetime('now', '-30 seconds')
+  WHERE start_time >= datetime('now', '-5 minutes')
   ORDER BY start_time DESC LIMIT 1
 `);
 
@@ -618,7 +619,7 @@ async getCurrentProcessingStatus() {
       const processedToday = db.prepare(`
           SELECT COUNT(*) as count 
           FROM processed_documents 
-          WHERE date(processed_at) = date('now', 'localtime')`
+          WHERE date(processed_at) = date('now')`
       ).get();
 
       return {

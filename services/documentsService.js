@@ -41,7 +41,7 @@ class DocumentsService {
       documents,
       tagNames,
       correspondentNames,
-      paperlessUrl: process.env.PAPERLESS_API_URL.replace('/api', '')
+      paperlessUrl: (process.env.PAPERLESS_API_URL || '').replace('/api', '')
     };
   }
 }
