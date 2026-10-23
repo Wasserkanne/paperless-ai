@@ -139,9 +139,10 @@ class OllamaService {
             return {
                 document: parsedResponse,
                 metrics: {
-                    promptTokens: 0,  // Ollama doesn't provide token metrics
-                    completionTokens: 0,
-                    totalTokens: 0
+                    // Ollama reports prompt and response token counts
+                    promptTokens: response.prompt_eval_count || 0,
+                    completionTokens: response.eval_count || 0,
+                    totalTokens: (response.prompt_eval_count || 0) + (response.eval_count || 0)
                 },
                 truncated: false
             };
@@ -190,9 +191,10 @@ class OllamaService {
             return {
                 document: parsedResponse,
                 metrics: {
-                    promptTokens: 0,
-                    completionTokens: 0,
-                    totalTokens: 0
+                    // Ollama reports prompt and response token counts
+                    promptTokens: response.prompt_eval_count || 0,
+                    completionTokens: response.eval_count || 0,
+                    totalTokens: (response.prompt_eval_count || 0) + (response.eval_count || 0)
                 },
                 truncated: false
             };
