@@ -43,7 +43,7 @@ class RestrictionPromptService {
 
   /**
    * Format tags list into a comma-separated string
-   * @param {Array} existingTags - Array of existing tags
+   * @param {Array} existingTags - Array of tag objects or plain tag names
    * @returns {string} - Comma-separated list of tag names or empty string
    */
   static _formatTagsList(existingTags) {
@@ -52,8 +52,11 @@ class RestrictionPromptService {
     }
 
     return existingTags
-      .filter(tag => tag && tag.name)
-      .map(tag => tag.name)
+      .map(tag => {
+        if (typeof tag === 'string') return tag;
+        return tag?.name || '';
+      })
+      .filter(name => name && name.length > 0)
       .join(', ');
   }
 

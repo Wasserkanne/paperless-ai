@@ -2345,11 +2345,16 @@ async function processQueue(customPrompt) {
 
     const existingDocumentTypesList = existingDocumentTypes.map(docType => docType.name);
 
+    // Align data shapes with the main scan path: the AI services expect
+    // plain tag and correspondent name strings, not API objects
+    const existingTagNames = existingTags.map(tag => tag.name);
+    const existingCorrespondentNames = existingCorrespondentList.map(correspondent => correspondent.name);
+
     while (documentQueue.length > 0) {
       const doc = documentQueue.shift();
       
       try {
-        const result = await processDocument(doc, existingTags, existingCorrespondentList, existingDocumentTypesList, ownUserId, customPrompt);
+        const result = await processDocument(doc, existingTagNames, existingCorrespondentNames, existingDocumentTypesList, ownUserId, customPrompt);
         if (!result) continue;
 
         const { analysis, originalData } = result;
