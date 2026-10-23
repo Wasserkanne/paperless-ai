@@ -57,12 +57,12 @@ class OpenAIService {
 
         const thumbnailData = await paperlessService.getThumbnailImage(id);
 
-        if (!thumbnailData) {
+        if (thumbnailData) {
+          await fs.mkdir(path.dirname(cachePath), { recursive: true });
+          await fs.writeFile(cachePath, thumbnailData);
+        } else {
           console.warn('Thumbnail nicht gefunden');
         }
-
-        await fs.mkdir(path.dirname(cachePath), { recursive: true });
-        await fs.writeFile(cachePath, thumbnailData);
       }
 
       // Format existing tags
@@ -120,8 +120,8 @@ class OpenAIService {
         ` + process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
         promptTags = '';
       } else {
-        config.mustHavePrompt = config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
-        systemPrompt = process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt;
+        // Replace placeholders on a local copy so the shared config template stays intact
+        systemPrompt = process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
         promptTags = '';
       }
 
@@ -147,7 +147,7 @@ class OpenAIService {
 
       if (customPrompt) {
         console.log('[DEBUG] Replace system prompt with custom prompt via WebHook');
-        systemPrompt = customPrompt + '\n\n' + config.mustHavePrompt;
+        systemPrompt = customPrompt + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
       }
 
       // Calculate tokens AFTER all prompt modifications are complete
@@ -195,13 +195,15 @@ class OpenAIService {
       }
 
       console.log(`[DEBUG] [${timestamp}] OpenAI request sent`);
-      console.log(`[DEBUG] [${timestamp}] Total tokens: ${response.usage.total_tokens}`);
+      if (response.usage) {
+        console.log(`[DEBUG] [${timestamp}] Total tokens: ${response.usage.total_tokens}`);
+      }
 
       const usage = response.usage;
       const mappedUsage = {
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        totalTokens: usage.total_tokens
+        promptTokens: usage?.prompt_tokens ?? 0,
+        completionTokens: usage?.completion_tokens ?? 0,
+        totalTokens: usage?.total_tokens ?? 0
       };
 
       let jsonContent = response.choices[0].message.content;
@@ -211,8 +213,8 @@ class OpenAIService {
       try {
         parsedResponse = JSON.parse(jsonContent);
         //write to file and append to the file (txt)
-        fs.appendFile('./logs/response.txt', jsonContent, (err) => {
-          if (err) throw err;
+        fs.appendFile('./logs/response.txt', jsonContent).catch(err => {
+          console.error('Failed to append response log:', err.message);
         });
       } catch (error) {
         console.error('Failed to parse JSON response:', error);
@@ -295,6 +297,12 @@ class OpenAIService {
       const reservedTokens = totalPromptTokens + Number(config.responseTokens); // Reserve for response
       const availableTokens = maxTokens - reservedTokens;
 
+      // Validate that we have positive available tokens
+      if (availableTokens <= 0) {
+        console.warn(`[WARNING] No available tokens for content. Reserved: ${reservedTokens}, Max: ${maxTokens}`);
+        throw new Error('Token limit exceeded: prompt too large for available token limit');
+      }
+
       // Truncate content if necessary
       const truncatedContent = await truncateToTokenLimit(content, availableTokens);
       const model = process.env.OPENAI_MODEL;
@@ -321,13 +329,15 @@ class OpenAIService {
 
       // Log token usage
       console.log(`[DEBUG] [${timestamp}] OpenAI request sent`);
-      console.log(`[DEBUG] [${timestamp}] Total tokens: ${response.usage.total_tokens}`);
+      if (response.usage) {
+        console.log(`[DEBUG] [${timestamp}] Total tokens: ${response.usage.total_tokens}`);
+      }
 
       const usage = response.usage;
       const mappedUsage = {
-        promptTokens: usage.prompt_tokens,
-        completionTokens: usage.completion_tokens,
-        totalTokens: usage.total_tokens
+        promptTokens: usage?.prompt_tokens ?? 0,
+        completionTokens: usage?.completion_tokens ?? 0,
+        totalTokens: usage?.total_tokens ?? 0
       };
 
       let jsonContent = response.choices[0].message.content;

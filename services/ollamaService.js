@@ -281,8 +281,8 @@ class OllamaService {
             ` + process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
             promptTags = '';
         } else {
-            config.mustHavePrompt = config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
-            systemPrompt = process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt;
+            // Replace placeholders on a local copy so the shared config template stays intact
+            systemPrompt = process.env.SYSTEM_PROMPT + '\n\n' + config.mustHavePrompt.replace('%CUSTOMFIELDS%', customFieldsStr);
             promptTags = '';
         }
 
