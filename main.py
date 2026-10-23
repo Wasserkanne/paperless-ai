@@ -7,6 +7,7 @@ import pickle
 from datetime import datetime
 from typing import List, Dict, Optional, Any, Union, Tuple
 import time
+import asyncio
 import traceback
 
 import requests
@@ -621,7 +622,10 @@ class DataManager:
             logger.info(f"Creating new ChromaDB collection '{COLLECTION_NAME}'")
             collection = self.chroma_client.create_collection(
                 name=COLLECTION_NAME,
-                embedding_function=self.embedding_function
+                embedding_function=self.embedding_function,
+                # Cosine space keeps distances in [0, 2] so similarity scores
+                # stay comparable with the normalized BM25 scores
+                metadata={"hnsw:space": "cosine"}
             )
             
             # Load documents if not already loaded
@@ -1142,8 +1146,9 @@ class SearchEngine:
         if semantic_results:
             # For semantic search, lower distance is better, so invert the score
             for r in semantic_results:
-                # Convert distance to similarity score (1 - normalized_distance)
-                r["score"] = 1 - r["score"] if r["score"] <= 1 else 0
+                # Convert distance to similarity score, clamped at zero for
+                # distances above 1
+                r["score"] = max(0.0, 1 - r["score"])
         
         # Add keyword results with weight
         for result in keyword_results:
@@ -1284,8 +1289,10 @@ class SearchEngine:
         logger.info(f"Performing search for: '{query}'")
         
         try:
-            # Perform hybrid search
-            results = self.hybrid_search(query)
+            # Perform hybrid search; filtering shrinks the candidate set, so
+            # fetch a larger pool when date or correspondent filters are active
+            has_filters = bool(request.from_date or request.to_date or request.correspondent)
+            results = self.hybrid_search(query, top_k=100 if has_filters else MAX_RESULTS)
             
             # Check if we got valid results
             if not results:
@@ -1662,15 +1669,17 @@ async def startup_event():
                 
                 logger.info("Search engine needs initialization after startup")
                 
-                # Initialize search engine after startup
-                @app.on_event("startup")
+                # Initialize search engine after startup in the background;
+                # a nested @app.on_event("startup") registration here would
+                # never fire because the startup event has already begun
                 async def post_startup_init():
                     # Wait a short time to let the API start
-                    time.sleep(2)
+                    await asyncio.sleep(2)
                     
                     logger.info("Post-startup initialization of search engine")
                     # Run indexing without forcing refresh but allow rebuild of indexes
-                    run_indexing(force_update=False)
+                    await asyncio.to_thread(run_indexing, False)
+                asyncio.create_task(post_startup_init())
         else:
             # If we're missing documents, initialize without loading
             logger.info("Not all required data found for auto-loading")
@@ -1813,6 +1822,9 @@ async def check_for_updates():
     if global_state.indexing_status.running:
         return {"status": "running", "message": "Indexing already in progress"}
     
+    if not global_state.data_manager:
+        return {"needs_update": False, "message": "DataManager not initialized yet"}
+    
     needs_update, message = global_state.data_manager.check_for_updates()
     return {"needs_update": needs_update, "message": message}
 
@@ -1821,6 +1833,9 @@ async def start_indexing(request: IndexingRequest, background_tasks: BackgroundT
     """Start indexing process"""
     if global_state.indexing_status.running:
         return {"status": "running", "message": "Indexing already in progress"}
+    
+    if not global_state.data_manager:
+        return {"status": "error", "message": "DataManager not initialized yet"}
     
     # Initialize models if not already done
     if not global_state.data_manager.is_initialized:
@@ -1863,6 +1878,17 @@ async def initialize_system(force: bool = False, background: bool = True, backgr
         }
     
     # Initialize data manager if needed
+    if not global_state.data_manager:
+        return {
+            "status": "error", 
+            "message": "DataManager not initialized yet, check data/.env",
+            "env_file_exists": env_file_exists,
+            "env_file_path": env_file_path if env_file_exists else None,
+            "environment_variables": env_vars,
+            "working_directory": os.getcwd(),
+            "config_valid": False
+        }
+    
     if not global_state.data_manager.is_initialized:
         global_state.data_manager.initialize_models()
     
@@ -2020,7 +2046,7 @@ if __name__ == "__main__":
         async def initialize_on_startup():
             logger.info("Running initialization after startup")
             # Give the app time to start
-            time.sleep(1)
+            await asyncio.sleep(1)
             
             # Check if we already have documents loaded
             if global_state.system_status.data_loaded and not args.force_refresh:
@@ -2033,12 +2059,13 @@ if __name__ == "__main__":
                     # Just make sure search engine is initialized with existing data
                     if not global_state.system_status.index_ready:
                         logger.info("Initializing search engine with existing data")
-                        global_state.search_engine.initialize(force_update=args.rebuild_indexes)
+                        await asyncio.to_thread(global_state.search_engine.initialize, force_update=args.rebuild_indexes)
                     
                     return
             
-            # Only run indexing if we need to
-            run_indexing(args.force_refresh, args.check_new)
+            # Only run indexing if we need to; run it in a worker thread so
+            # the event loop is not blocked
+            await asyncio.to_thread(run_indexing, args.force_refresh, args.check_new)
     
     # If check-new is requested from command line
     elif args.check_new:
@@ -2048,9 +2075,9 @@ if __name__ == "__main__":
         async def check_new_on_startup():
             logger.info("Checking for new documents after startup")
             # Give the app time to start
-            time.sleep(1)
+            await asyncio.sleep(1)
             # Run indexing with check_new=True but without force refresh
-            run_indexing(False, True)
+            await asyncio.to_thread(run_indexing, False, True)
     
     # If rebuild-indexes is requested from command line
     elif args.rebuild_indexes:
@@ -2060,10 +2087,12 @@ if __name__ == "__main__":
         async def rebuild_indexes_on_startup():
             logger.info("Rebuilding indexes after startup")
             # Give the app time to start
-            time.sleep(2)
+            await asyncio.sleep(2)
             
             if global_state.search_engine and global_state.data_manager.documents:
                 logger.info("Rebuilding indexes with existing documents")
-                global_state.search_engine.initialize(force_update=True)
+                await asyncio.to_thread(global_state.search_engine.initialize, force_update=True)
     
-    uvicorn.run("main:app", host=args.host, port=args.port, reload=False)
+    # Pass the app object directly; re-importing via "main:app" would create
+    # a fresh app instance and silently drop the CLI-flag startup handlers
+    uvicorn.run(app, host=args.host, port=args.port, reload=False)
