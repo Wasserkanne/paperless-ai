@@ -206,7 +206,8 @@ async function processDocument(doc, existingTags, existingCorrespondentList, exi
 
   let content = originalData.content;
 
-  if (!content || !content.length >= 10) {
+  // Fixed precedence: skip documents with no or too-short content
+  if (!content || content.length < 10) {
     console.log(`[DEBUG] Document ${doc.id} has no content, skipping analysis`);
     return null;
   }
