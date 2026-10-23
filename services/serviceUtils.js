@@ -1,6 +1,12 @@
 const tiktoken = require('tiktoken');
 const fs = require('fs').promises;
 const path = require('path');
+const crypto = require('crypto');
+
+// Shared JWT secret for auth and setup routes: use the persisted value from
+// data/.env when present, otherwise a random per-boot secret so tokens can
+// never be forged with a known constant before setup completes
+const jwtSecret = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 
 // Map non-OpenAI models to compatible OpenAI encodings or use estimation
 function getCompatibleModel(model) {
@@ -205,5 +211,6 @@ module.exports = {
     calculateTotalPromptTokens,
     truncateToTokenLimit,
     writePromptToFile,
-    runWithConcurrency
+    runWithConcurrency,
+    jwtSecret
 };
